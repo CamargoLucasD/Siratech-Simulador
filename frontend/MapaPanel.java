@@ -3,6 +3,7 @@ package frontend;
 import backend.AnimalSimulado;
 import backend.EstadoAnimal;
 import backend.ResgatadorVirtual;
+import backend.TotemCaptura;
 
 import javax.swing.*;
 import java.awt.*;
@@ -45,7 +46,9 @@ public class MapaPanel extends JPanel {
     // ── Estado ─────────────────────────────────────────────────────────────────
     private List<AnimalSimulado> animais = new ArrayList<>();
     private List<ResgatadorVirtual> resgatadores = new ArrayList<>();
+    private List<TotemCaptura> totens = new ArrayList<>();
     private AnimalSimulado animalSelecionado = null;
+    private TotemCaptura totemArrastando = null; // totem sendo movido pelo usuário
     private Consumer<AnimalSimulado> onAnimalClick;
 
     // ── Flags de visibilidade ─────────────────────────────────────────────────
@@ -58,7 +61,25 @@ public class MapaPanel extends JPanel {
     private BufferedImage mapaCache = null;
     private boolean mapaSujo = true;
 
-    // ── Seeds para variações determinísticas ──────────────────────────────────
+    // ── Cache de sprites de vaca por estado ──────────────────────────────────
+    private final java.util.EnumMap<EstadoAnimal, BufferedImage> spriteCache =
+            new java.util.EnumMap<>(EstadoAnimal.class);
+
+    private BufferedImage getSpriteVaca(EstadoAnimal estado) {
+        return spriteCache.computeIfAbsent(estado, s -> {
+            BufferedImage img = new BufferedImage(60, 80, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D sg = img.createGraphics();
+            sg.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            sg.translate(30, 48); // centro do sprite dentro da imagem
+            boolean foraArea = s == EstadoAnimal.FORA_DA_AREA;
+            boolean emResgate = s == EstadoAnimal.EM_RESGATE || s == EstadoAnimal.RETORNANDO;
+            desenharVacaSprite(sg, s, emResgate, foraArea);
+            sg.dispose();
+            return img;
+        });
+    }
+
+    // Seeds para variações determinísticas ──────────────────────────────────
     private final Random rng = new Random(42L);
 
     // ── Pulso de alerta ────────────────────────────────────────────────────────
@@ -111,7 +132,7 @@ public class MapaPanel extends JPanel {
         configurarMouse();
         configurarTeclado();
 
-        pulseTimer = new Timer(30, e -> {
+        pulseTimer = new Timer(50, e -> {
             pulsePhase += 0.12f;
             if (pulsePhase > (float)(Math.PI * 2)) pulsePhase -= (float)(Math.PI * 2);
             if (isShowing()) repaint();
@@ -139,6 +160,11 @@ public class MapaPanel extends JPanel {
 
     public void setResgatadores(List<ResgatadorVirtual> resgatadores) {
         this.resgatadores = resgatadores;
+        repaint();
+    }
+
+    public void setTotens(List<TotemCaptura> totens) {
+        this.totens = totens;
         repaint();
     }
 
@@ -198,7 +224,12 @@ public class MapaPanel extends JPanel {
             // sprites com antialiasing ligado
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            // 2. Resgatadores
+            // 2. Totens de captura
+            for (TotemCaptura t : totens) {
+                desenharTotem(g, t);
+            }
+
+            // 3. Resgatadores
             if (exibirResgatadores) {
                 for (ResgatadorVirtual r : resgatadores) {
                     desenharResgatador(g, r);
@@ -999,11 +1030,125 @@ public class MapaPanel extends JPanel {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // TOTENS — ícone de sensor fixo com raio de detecção animado
+    // ══════════════════════════════════════════════════════════════════════════
+    private void desenharTotem(Graphics2D g, TotemCaptura totem) {
+        int cx = (int) totem.getX();
+        int cy = (int) totem.getY();
+        int raio = (int) totem.getRaioDeteccao();
+
+        // Pular totens fora da área visível
+        if (cx + raio < offsetX || cx - raio > offsetX + getWidth() ||
+            cy + raio < offsetY || cy - raio > offsetY + getHeight()) return;
+
+        boolean temAnimal = totem.quantidadeDentroAgora() > 0;
+
+        // ── Raio de detecção (anel pulsante) ─────────────────────────────────
+        double alpha = totem.getPulsoAlpha();
+        Color corRaio = temAnimal
+            ? new Color(60, 220, 160, (int)(alpha * 80))
+            : new Color(80, 160, 240, (int)(alpha * 55));
+        Color corRaioB = temAnimal
+            ? new Color(60, 220, 160, (int)(alpha * 180))
+            : new Color(80, 160, 240, (int)(alpha * 130));
+
+        g.setColor(corRaio);
+        g.fillOval(cx - raio, cy - raio, raio * 2, raio * 2);
+        Stroke s = g.getStroke();
+        g.setStroke(new BasicStroke(temAnimal ? 2.0f : 1.4f,
+            BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER,
+            10f, new float[]{8, 5}, (float)(pulsePhase * 6)));
+        g.setColor(corRaioB);
+        g.drawOval(cx - raio, cy - raio, raio * 2, raio * 2);
+        g.setStroke(s);
+
+        // ── Sombra elíptica no chão ───────────────────────────────────────────
+        g.setColor(new Color(0, 0, 0, 55));
+        g.fillOval(cx - 10, cy + 14, 20, 7);
+
+        // ── Poste (haste vertical) ────────────────────────────────────────────
+        g.setColor(new Color(70, 70, 80));
+        g.fillRect(cx - 3, cy - 6, 6, 22);
+        g.setColor(new Color(110, 110, 125));
+        g.fillRect(cx - 3, cy - 6, 3, 22); // highlight esquerdo
+
+        // ── Base do poste ─────────────────────────────────────────────────────
+        g.setColor(new Color(55, 55, 65));
+        g.fillRect(cx - 7, cy + 14, 14, 5);
+        g.setColor(new Color(90, 90, 100));
+        g.fillRect(cx - 7, cy + 14, 14, 2);
+
+        // ── Corpo do sensor (caixa eletrônica) ────────────────────────────────
+        g.setColor(new Color(40, 44, 55));
+        g.fillRoundRect(cx - 11, cy - 20, 22, 16, 4, 4);
+        // Borda iluminada
+        Color corBorda = temAnimal ? new Color(60, 230, 150) : new Color(80, 160, 240);
+        g.setColor(corBorda);
+        g.setStroke(new BasicStroke(1.4f));
+        g.drawRoundRect(cx - 11, cy - 20, 22, 16, 4, 4);
+        g.setStroke(s);
+
+        // ── LED pulsante ──────────────────────────────────────────────────────
+        float pulso = (float)(0.5 + 0.5 * Math.sin(pulsePhase + totem.getId()));
+        Color corLED = temAnimal
+            ? new Color(60, 255, 160, (int)(180 + 75 * pulso))
+            : new Color(80, 180, 255, (int)(160 + 80 * pulso));
+        g.setColor(corLED);
+        g.fillOval(cx - 3, cy - 16, 6, 6);
+        g.setColor(new Color(255, 255, 255, (int)(120 * pulso)));
+        g.fillOval(cx - 2, cy - 16, 3, 3); // reflexo
+
+        // ── Antena ────────────────────────────────────────────────────────────
+        g.setColor(new Color(90, 90, 100));
+        g.fillRect(cx + 4, cy - 28, 2, 10);
+        g.setColor(corLED);
+        g.fillOval(cx + 3, cy - 31, 5, 5); // ponta da antena
+
+        // ── Ícone de sinal (ondas de rádio quando ativo) ──────────────────────
+        if (temAnimal) {
+            int wa = (int)(alpha * 120);
+            g.setStroke(new BasicStroke(1.2f));
+            g.setColor(new Color(60, 220, 160, wa));
+            g.drawArc(cx + 8, cy - 26, 8, 8, -30, 120);
+            g.drawArc(cx + 5, cy - 30, 14, 14, -30, 120);
+            g.setStroke(s);
+        }
+
+        // ── Nome do totem ─────────────────────────────────────────────────────
+        g.setFont(new Font("Monospaced", Font.BOLD, 8));
+        FontMetrics fm = g.getFontMetrics();
+        String label = totem.getNome();
+        int lw = fm.stringWidth(label);
+        g.setColor(new Color(0, 0, 0, 150));
+        g.fillRoundRect(cx - lw/2 - 3, cy + 22, lw + 6, 11, 3, 3);
+        g.setColor(temAnimal ? new Color(100, 255, 180) : new Color(150, 200, 255));
+        g.drawString(label, cx - lw/2, cy + 31);
+
+        // ── Badge com contador de capturas ────────────────────────────────────
+        if (totem.totalCapturas() > 0) {
+            String count = String.valueOf(totem.totalCapturas());
+            g.setFont(new Font("Monospaced", Font.BOLD, 9));
+            fm = g.getFontMetrics();
+            int cw = fm.stringWidth(count) + 6;
+            g.setColor(new Color(240, 160, 40));
+            g.fillOval(cx + 8, cy - 24, cw, 13);
+            g.setColor(Color.BLACK);
+            g.drawString(count, cx + 11, cy - 14);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // ANIMAIS — sprites top-down com anel indicador
     // ══════════════════════════════════════════════════════════════════════════
     private void desenharAnimal(Graphics2D g, AnimalSimulado a) {
         int x = (int) a.getX();
         int y = (int) a.getY();
+
+        // Pular animais fora da área visível (viewport culling)
+        int vx1 = offsetX - 60, vy1 = offsetY - 80;
+        int vx2 = offsetX + getWidth() + 60, vy2 = offsetY + getHeight() + 80;
+        if (x < vx1 || x > vx2 || y < vy1 || y > vy2) return;
+
         EstadoAnimal estado = a.getEstado();
         boolean foraArea = (estado == EstadoAnimal.FORA_DA_AREA);
         boolean emResgate = (estado == EstadoAnimal.EM_RESGATE || estado == EstadoAnimal.RETORNANDO);
@@ -1035,12 +1180,13 @@ public class MapaPanel extends JPanel {
         g.setColor(new Color(0, 0, 0, 55));
         g.fillOval(x - 13, y + 9, 26, 9);
 
-        // Sprite
+        // Sprite cacheado — rotacionado conforme direção de movimento
+        BufferedImage sprite = getSpriteVaca(estado);
         double angulo = Math.atan2(a.getVy(), a.getVx());
         Graphics2D gc = (Graphics2D) g.create();
         gc.translate(x, y);
         gc.rotate(angulo + Math.PI / 2);
-        desenharVacaSprite(gc, estado, emResgate, foraArea);
+        gc.drawImage(sprite, -30, -48, null); // offset = centro do sprite
         gc.dispose();
 
         if (foraArea) desenharIconeAlerta(g, x, y - 32);
@@ -1223,6 +1369,10 @@ public class MapaPanel extends JPanel {
         int x = (int) r.getX();
         int y = (int) r.getY();
 
+        // Pular resgatadores fora da área visível
+        if (x < offsetX - 60 || x > offsetX + getWidth() + 60 ||
+            y < offsetY - 80 || y > offsetY + getHeight() + 80) return;
+
         g.setColor(new Color(0, 0, 0, 55));
         g.fillOval(x - 11, y + 12, 22, 8);
 
@@ -1392,40 +1542,84 @@ public class MapaPanel extends JPanel {
                     dragStartY  = e.getY() + offsetY;
                     dragOffsetX = offsetX;
                     dragOffsetY = offsetY;
-                    dragging = true;
+
+                    // Verificar se clicou em cima de um totem (prioridade sobre câmera)
+                    int mx = e.getX() + offsetX;
+                    int my = e.getY() + offsetY;
+                    totemArrastando = null;
+                    for (TotemCaptura t : totens) {
+                        if (Math.hypot(t.getX() - mx, t.getY() - my) <= 24) {
+                            totemArrastando = t;
+                            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                            break;
+                        }
+                    }
+
+                    dragging = totemArrastando == null; // só ativa drag de câmera se não pegou totem
                 }
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
-                if (SwingUtilities.isLeftMouseButton(e) && dragging) {
-                    double dist = Math.hypot(e.getX() - mousePressX, e.getY() - mousePressY);
-                    if (dist < 5.0) {
-                        int mx = e.getX() + offsetX;
-                        int my = e.getY() + offsetY;
-                        AnimalSimulado clicado = null;
-                        double menorDist = 22;
-                        for (AnimalSimulado a : animais) {
-                            double d = Math.hypot(a.getX() - mx, a.getY() - my);
-                            if (d < menorDist) {
-                                menorDist = d;
-                                clicado = a;
+                if (SwingUtilities.isLeftMouseButton(e)) {
+                    if (totemArrastando != null) {
+                        // Solta o totem
+                        totemArrastando = null;
+                        setCursor(Cursor.getDefaultCursor());
+                        repaint();
+                        return;
+                    }
+                    if (dragging) {
+                        double dist = Math.hypot(e.getX() - mousePressX, e.getY() - mousePressY);
+                        if (dist < 5.0) {
+                            int mx = e.getX() + offsetX;
+                            int my = e.getY() + offsetY;
+                            AnimalSimulado clicado = null;
+                            double menorDist = 22;
+                            for (AnimalSimulado a : animais) {
+                                double d = Math.hypot(a.getX() - mx, a.getY() - my);
+                                if (d < menorDist) {
+                                    menorDist = d;
+                                    clicado = a;
+                                }
+                            }
+                            if (clicado != null && onAnimalClick != null) {
+                                onAnimalClick.accept(clicado);
                             }
                         }
-                        if (clicado != null && onAnimalClick != null) {
-                            onAnimalClick.accept(clicado);
-                        }
+                        dragging = false;
+                        setCursor(Cursor.getDefaultCursor());
                     }
-                    dragging = false;
-                    setCursor(Cursor.getDefaultCursor());
                 }
             }
         });
 
         addMouseMotionListener(new MouseMotionAdapter() {
             @Override
+            public void mouseMoved(MouseEvent e) {
+                int mx = e.getX() + offsetX;
+                int my = e.getY() + offsetY;
+                boolean sobreTotem = totens.stream()
+                        .anyMatch(t -> Math.hypot(t.getX() - mx, t.getY() - my) <= 24);
+                setCursor(sobreTotem
+                        ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                        : Cursor.getDefaultCursor());
+            }
+
+            @Override
             public void mouseDragged(MouseEvent e) {
-                if (dragging && SwingUtilities.isLeftMouseButton(e)) {
+                if (!SwingUtilities.isLeftMouseButton(e)) return;
+
+                // Arrastar totem tem prioridade
+                if (totemArrastando != null) {
+                    totemArrastando.setX(e.getX() + offsetX);
+                    totemArrastando.setY(e.getY() + offsetY);
+                    repaint();
+                    return;
+                }
+
+                // Arrastar câmera
+                if (dragging) {
                     double dist = Math.hypot(e.getX() - mousePressX, e.getY() - mousePressY);
                     if (dist >= 5.0) {
                         setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));

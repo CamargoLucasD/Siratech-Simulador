@@ -214,7 +214,10 @@ public class TelaAnimais extends JPanel implements OverlayPanel.TelaBase {
         private List<AnimalSimulado> filtrados = new java.util.ArrayList<>();
 
         void setAnimais(List<AnimalSimulado> animais) {
-            this.todos = new java.util.ArrayList<>(animais);
+            // Apenas animais com brinco (colar) vinculado
+            this.todos = animais.stream()
+                .filter(a -> a.getAnimal().getColar() != null)
+                .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
             aplicarFiltroAtual();
         }
 

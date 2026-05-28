@@ -4,11 +4,18 @@
         "http://www.hibernate.org/dtd/hibernate-configuration-3.0.dtd">
 <hibernate-configuration>
     <session-factory>
-        <property name="hibernate.connection.driver_class">org.sqlite.JDBC</property>
-        <property name="hibernate.connection.url">jdbc:sqlite:${DB_PATH}</property>
-        <property name="hibernate.dialect">org.hibernate.community.dialect.SQLiteDialect</property>
+        <!-- Driver PostgreSQL -->
+        <property name="hibernate.connection.driver_class">org.postgresql.Driver</property>
+
+        <!-- URL, usuário e senha são injetados via .env pelo HibernateUtil -->
+
+        <!-- Dialeto PostgreSQL -->
+        <property name="hibernate.dialect">org.hibernate.dialect.PostgreSQLDialect</property>
+
         <property name="hibernate.hbm2ddl.auto">update</property>
         <property name="hibernate.show_sql">false</property>
+
+        <property name="hibernate.connection.pool_size">10</property>
 
         <mapping class="backend.Animal"/>
         <mapping class="backend.Colar"/>

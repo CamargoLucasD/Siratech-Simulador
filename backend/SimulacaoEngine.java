@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /**
  * SimulacaoEngine — coração do simulador.
@@ -47,6 +48,7 @@ public class SimulacaoEngine {
     // ── Estado da simulação ───────────────────────────────────────────────────────
     private final List<AnimalSimulado>    animais      = new CopyOnWriteArrayList<>();
     private final List<ResgatadorVirtual> resgatadores = new CopyOnWriteArrayList<>();
+    private final List<TotemCaptura>      totens       = new CopyOnWriteArrayList<>();
     private final SimulacaoService simulacaoService;
     private Fazenda fazenda; // não-final: pode ser trocada via trocarFazenda()
 
@@ -62,6 +64,8 @@ public class SimulacaoEngine {
     private Consumer<AnimalSimulado> onResgateCompleto;
     /** Disparado quando a fazenda é trocada com sucesso. Argumento: nova fazenda. */
     private Consumer<Fazenda>        onFazendaTrocada;
+    /** Disparado quando um totem detecta um animal. */
+    private BiConsumer<TotemCaptura, AnimalSimulado> onCaptura;
 
     // ── Contadores de mudança de direção por animal ───────────────────────────────
     private final java.util.Map<Integer, Integer> ticksMudancaDirecao
@@ -103,18 +107,29 @@ public class SimulacaoEngine {
     // ═══════════════════════════════════════════════════════════════════════════════
 
     public void carregarAnimais(List<Animal> animaisDB) {
-        animais.clear();
-        ticksMudancaDirecao.clear();
-        for (Animal a : animaisDB) {
-            double x = AREA_X1 + 80 + rng.nextDouble() * (AREA_X2 - AREA_X1 - 160);
-            double y = AREA_Y1 + 80 + rng.nextDouble() * (AREA_Y2 - AREA_Y1 - 160);
-            AnimalSimulado sim = new AnimalSimulado(a, x, y);
-            sim.setLatitude(pixelParaLat(y));
-            sim.setLongitude(pixelParaLon(x));
-            animais.add(sim);
+    animais.clear();
+    ticksMudancaDirecao.clear();
+
+    for (Animal a : animaisDB) {
+
+        // IGNORA animais sem coleira
+        if (a.getColar() == null) {
+            continue;
         }
-        System.out.println("[SimulacaoEngine] " + animais.size() + " animais carregados.");
+
+        double x = AREA_X1 + 80 + rng.nextDouble() * (AREA_X2 - AREA_X1 - 160);
+        double y = AREA_Y1 + 80 + rng.nextDouble() * (AREA_Y2 - AREA_Y1 - 160);
+
+        AnimalSimulado sim = new AnimalSimulado(a, x, y);
+
+        sim.setLatitude(pixelParaLat(y));
+        sim.setLongitude(pixelParaLon(x));
+
+        animais.add(sim);
     }
+
+    System.out.println("[SimulacaoEngine] " + animais.size() + " animais carregados.");
+}
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Controle
@@ -201,6 +216,46 @@ public class SimulacaoEngine {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
+    // Totens
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Adiciona um totem ao engine. O callback onCaptura registrado no engine
+     * é propagado automaticamente para o totem.
+     */
+    public void adicionarTotem(TotemCaptura totem) {
+        totem.setOnCaptura((t, a) -> {
+            if (onCaptura != null) onCaptura.accept(t, a);
+        });
+        totens.add(totem);
+        System.out.println("[SimulacaoEngine] Totem adicionado: " + totem.getNome()
+            + " em (" + (int)totem.getX() + ", " + (int)totem.getY() + ")");
+    }
+
+    /** Remove todos os totens cadastrados. */
+    public void limparTotens() {
+        totens.clear();
+    }
+
+    /**
+     * Cria e adiciona totens padrão distribuídos pelos pontos de interesse da fazenda.
+     * Pode ser chamado após carregarAnimais() para popular uma fazenda com sensores.
+     */
+    public void adicionarTotensPadrao() {
+        totens.clear();
+        adicionarTotem(new TotemCaptura(1, "Totem Curral",      CURRAL_X, CURRAL_Y, 90));
+        adicionarTotem(new TotemCaptura(2, "Totem Lago",        LAGO_X,   LAGO_Y,   80));
+        adicionarTotem(new TotemCaptura(3, "Totem Alimentação", ALIM_X,   ALIM_Y,   85));
+        adicionarTotem(new TotemCaptura(4, "Totem Norte",       800,      260,      75));
+        adicionarTotem(new TotemCaptura(5, "Totem Sul",         800,      960,      75));
+        adicionarTotem(new TotemCaptura(6, "Totem Leste",      1380,      600,      75));
+        adicionarTotem(new TotemCaptura(7, "Totem Oeste",       220,      600,      75));
+        System.out.println("[SimulacaoEngine] " + totens.size() + " totens padrão adicionados.");
+    }
+
+    public List<TotemCaptura> getTotens() { return totens; }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     // Resgate
     // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -238,17 +293,24 @@ public class SimulacaoEngine {
         }
 
         // ── Atualiza resgatadores ─────────────────────────────────────────────────
-        Iterator<ResgatadorVirtual> it = resgatadores.iterator();
-        while (it.hasNext()) {
-            ResgatadorVirtual r = it.next();
-            boolean concluiu = r.tick();
-            if (concluiu) {
-                it.remove();
-                AnimalSimulado alvo = r.getAlvo();
-                simulacaoService.resolverAlertaRetorno(alvo);
-                if (onResgateCompleto != null) onResgateCompleto.accept(alvo);
-                System.out.println("[SimulacaoEngine] Resgate concluído: animal #"
-                    + alvo.getAnimal().getId());
+        List<ResgatadorVirtual> concluidos = new ArrayList<>();
+        for (ResgatadorVirtual r : resgatadores) {
+            if (r.tick()) concluidos.add(r);
+        }
+        resgatadores.removeAll(concluidos);
+        for (ResgatadorVirtual r : concluidos) {
+            AnimalSimulado alvo = r.getAlvo();
+            simulacaoService.resolverAlertaRetorno(alvo);
+            if (onResgateCompleto != null) onResgateCompleto.accept(alvo);
+            System.out.println("[SimulacaoEngine] Resgate concluído: animal #"
+                + alvo.getAnimal().getId());
+        }
+
+        // ── Verifica totens de captura ────────────────────────────────────────────
+        for (TotemCaptura totem : totens) {
+            totem.avancarPulso(0.10);
+            for (AnimalSimulado a : animais) {
+                totem.verificar(a);
             }
         }
 
@@ -430,4 +492,11 @@ public class SimulacaoEngine {
     public void setOnResgate(Consumer<AnimalSimulado> cb)          { this.onResgate = cb; }
     public void setOnResgateCompleto(Consumer<AnimalSimulado> cb)  { this.onResgateCompleto = cb; }
     public void setOnFazendaTrocada(Consumer<Fazenda> cb)          { this.onFazendaTrocada = cb; }
+    public void setOnCaptura(BiConsumer<TotemCaptura, AnimalSimulado> cb) {
+        this.onCaptura = cb;
+        // Propaga para totens já registrados
+        for (TotemCaptura t : totens) {
+            t.setOnCaptura((totem, animal) -> cb.accept(totem, animal));
+        }
+    }
 }

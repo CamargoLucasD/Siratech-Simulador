@@ -527,6 +527,19 @@ public class SimuladorFrame extends JFrame {
                 + " (" + engine.getAnimais().size() + " animais)");
         }));
 
+        // ── Totens de captura ───────────────────────────────────────────────────────
+        engine.adicionarTotensPadrao();
+        mapaPanel.setTotens(engine.getTotens());
+
+        engine.setOnCaptura((totem, animal) -> SwingUtilities.invokeLater(() -> {
+            String nome = animal.getAnimal().getNome() != null
+                ? animal.getAnimal().getNome()
+                : "#" + String.format("%03d", animal.getAnimal().getId());
+            String msg = totem.getNome() + " detectou " + nome;
+            painelLog.logInfo(msg);
+            mapaPanel.adicionarNotificacao("📡  " + msg, new Color(60, 220, 160));
+        }));
+
         mapaPanel.setOnAnimalClick(a -> {
             painelLateral.selecionarAnimal(a);
             mapaPanel.selecionarAnimal(a);
@@ -687,6 +700,10 @@ public class SimuladorFrame extends JFrame {
     // ══════════════════════════════════════════════════════════════════════════════
 
     public static void main(String[] args) {
+        // Silencia todo output do terminal (logs, prints de debug, etc.)
+        System.setOut(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+        System.setErr(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {}

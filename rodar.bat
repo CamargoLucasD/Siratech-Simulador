@@ -10,9 +10,9 @@ REM Copia o hibernate.cfg.xml para a pasta out
 xcopy /y resources\hibernate.cfg.xml out\
 
 REM Compila o simulador
-javac -cp ".;lib/*;%SIRATECH%\out;%SIRATECH%\lib\*" -d out backend\*.java frontend\*.java
+javac -cp ".;lib\*;%SIRATECH%\out;%SIRATECH%\lib\*" -d out backend\*.java frontend\*.java
 
 REM Roda — passa o caminho do banco como propriedade do sistema
-java -DDB_PATH="%DB_PATH%" -cp ".;out;%SIRATECH%\lib\*;%SIRATECH%\out" frontend.SimuladorFrame
+java -DDB_PATH="%DB_PATH%" -cp ".;out;lib\*;%SIRATECH%\lib\*;%SIRATECH%\out" frontend.SimuladorFrame
 
 pause
