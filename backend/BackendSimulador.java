@@ -108,4 +108,17 @@ public class BackendSimulador {
     public SimulacaoService getSimulacaoService() {
         return simulacaoService;
     }
+
+    /**
+     * Sincroniza os animais do simulador com o banco em tempo real.
+     * Deve ser chamado pelo ERP sempre que um animal for cadastrado,
+     * editado ou removido. A simulação continua rodando normalmente.
+     */
+    public void sincronizarAnimais() {
+        final int fazendaId = fazenda.getId();
+        List<Animal> animaisDB = animalService.listarAtivos().stream()
+            .filter(a -> a.getFazendaId() != null && a.getFazendaId() == fazendaId)
+            .toList();
+        engine.sincronizarAnimais(animaisDB);
+    }
 }

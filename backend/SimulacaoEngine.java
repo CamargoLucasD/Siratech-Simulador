@@ -8,6 +8,7 @@ import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 
 /**
  * SimulacaoEngine — coração do simulador.
@@ -130,6 +131,60 @@ public class SimulacaoEngine {
 
     System.out.println("[SimulacaoEngine] " + animais.size() + " animais carregados.");
 }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Sincronização incremental com o banco (chamada pelo ERP em tempo real)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Reconcilia os animais em simulação com a lista atualizada do banco.
+     * - Animais novos (com colar) são inseridos em posição aleatória dentro da área.
+     * - Animais removidos ou inativados são retirados da simulação.
+     * - Animais já presentes mantêm posição, estado e velocidade intactos.
+     *
+     * Seguro para chamar enquanto a simulação está rodando.
+     */
+    public void sincronizarAnimais(List<Animal> animaisDB) {
+        // IDs ativos no banco (apenas com colar)
+        java.util.Set<Integer> idsNovos = animaisDB.stream()
+            .filter(a -> a.getColar() != null)
+            .map(Animal::getId)
+            .collect(java.util.stream.Collectors.toSet());
+
+        // IDs já em simulação
+        java.util.Set<Integer> idsExistentes = animais.stream()
+            .map(a -> a.getAnimal().getId())
+            .collect(java.util.stream.Collectors.toSet());
+
+        // 1. Remove animais que saíram do banco ou perderam o colar
+        animais.removeIf(a -> {
+            boolean remover = !idsNovos.contains(a.getAnimal().getId());
+            if (remover) {
+                ticksMudancaDirecao.remove(a.getAnimal().getId());
+                System.out.println("[SimulacaoEngine] Animal removido da simulação: "
+                    + a.getAnimal().getNome() + " (id=" + a.getAnimal().getId() + ")");
+            }
+            return remover;
+        });
+
+        // 2. Adiciona animais que ainda não estão em simulação
+        for (Animal a : animaisDB) {
+            if (a.getColar() == null) continue;
+            if (idsExistentes.contains(a.getId())) continue;
+
+            double x = AREA_X1 + 80 + rng.nextDouble() * (AREA_X2 - AREA_X1 - 160);
+            double y = AREA_Y1 + 80 + rng.nextDouble() * (AREA_Y2 - AREA_Y1 - 160);
+            AnimalSimulado sim = new AnimalSimulado(a, x, y);
+            sim.setLatitude(pixelParaLat(y));
+            sim.setLongitude(pixelParaLon(x));
+            animais.add(sim);
+            System.out.println("[SimulacaoEngine] Animal adicionado à simulação: "
+                + a.getNome() + " (id=" + a.getId() + ")");
+        }
+
+        System.out.println("[SimulacaoEngine] Sincronização concluída. Animais em simulação: "
+            + animais.size());
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Controle
